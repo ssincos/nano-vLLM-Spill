@@ -41,7 +41,7 @@ class LlamaAttn(nn.Module):
         self.q_size = head_dim * self.num_heads
         self.kv_size = head_dim * self.num_kv_heads
         
-        # Llama 3.2 没有 q_norm 和 k_norm
+        # Llama 3.2 does not have q_norm or k_norm
 
         self.rotary_emb = RotaryEmbedding(
             base=rope_base,
@@ -93,10 +93,6 @@ class LlamaAttn(nn.Module):
             q = q.view(B, N, self.num_heads, self.head_dim)
             k = k.view(B, N, self.num_kv_heads, self.head_dim)
             v = v.view(B, N, self.num_kv_heads, self.head_dim)
-
-
-        # DEBUG: Print positions to diagnose issue
-        import sys
 
         q, k = self.rotary_emb(positions, q, k) 
 
