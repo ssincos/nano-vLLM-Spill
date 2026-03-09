@@ -50,7 +50,13 @@ class RotaryEmbedding(nn.Module):
         self, 
         base:int,
         rotary_embedding: int, 
-        max_position: int = 2048
+        max_position: int = 2048,
+        is_llama3: bool = False,
+        # the following params are only used in llama3.2
+        llama3_rope_factor: float = 32.0,
+        llama3_rope_high_freq_factor: float = 4.0,
+        llama3_rope_low_freq_factor: float = 1.0,
+        llama3_rope_original_max_position_embeddings: int = 8192,
     ):
         super().__init__()
         self.base = base
@@ -59,6 +65,26 @@ class RotaryEmbedding(nn.Module):
         # max position that the long context can reach
         self.max_position = max_position
         self.inv_freq = 1/(base ** (torch.arange(0, self.rotary_embedding, 2)/self.rotary_embedding))
+
+        if is_llama3:
+            # specifically for llama3.2
+            import math
+            inv_freq = self.inv_freq
+            # no smooth if low_freq_factor == high_freq_factor
+            wave_len = 2 * math.pi / inv_freq
+            if llama3_rope_low_freq_factor == llama3_rope_high_freq_factor:
+                inv_freq = torch.where(
+                    wave_len < llama3_rope_original_max_position_embeddings / llama3_rope_high_freq_factor,
+                    inv_freq,
+                    inv_freq / llama3_rope_factor,
+                )
+            else:
+                delta = llama3_rope_high_freq_factor - llama3_rope_low_freq_factor
+                smooth = (llama3_rope_original_max_position_embeddings / wave_len - llama3_rope_low_freq_factor) / delta
+                smooth = torch.clamp(smooth, 0, 1)
+                factor = (1 - smooth) / llama3_rope_factor + smooth
+                inv_freq = factor * inv_freq
+            self.inv_freq = inv_freq
 
         positions = torch.arange(self.max_position).float()
         # (max_position, rotary_embedding/2)

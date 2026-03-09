@@ -6,6 +6,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
 from myvllm.models.qwen3 import Qwen3ForCausalLM
+from myvllm.models.llama import LlamaForCausalLM
 from myvllm.layers.sampler import SamplerLayer
 from myvllm.engine.sequence import Sequence
 from myvllm.utils import *
@@ -25,23 +26,44 @@ class ModelRunner:
         torch.cuda.set_device(rank)
 
         # set model
-        self.model = Qwen3ForCausalLM(
-            vocab_size=config['vocab_size'],
-            hidden_size=config['hidden_size'],
-            num_heads=config['num_heads'],
-            head_dim=config['head_dim'],
-            scale=config['scale'],
-            num_kv_heads=config['num_kv_heads'],
-            rms_norm_epsilon=config['rms_norm_epsilon'],
-            qkv_bias=config['qkv_bias'],
-            base=config['base'],
-            max_position=config['max_position'],
-            intermediate_size=config['intermediate_size'],
-            ffn_bias=config['ffn_bias'],
-            num_layers=config['num_layers'],
-            tie_word_embeddings=config['tie_word_embeddings'],
-            block_size=self.block_size,
-        )
+        match config['model_name_or_path']:
+            case 'Qwen/Qwen3-0.6B':
+                self.model = Qwen3ForCausalLM(
+                    vocab_size=config['vocab_size'],
+                    hidden_size=config['hidden_size'],
+                    num_heads=config['num_heads'],
+                    head_dim=config['head_dim'],
+                    scale=config['scale'],
+                    num_kv_heads=config['num_kv_heads'],
+                    rms_norm_epsilon=config['rms_norm_epsilon'],
+                    qkv_bias=config['qkv_bias'],
+                    base=config['base'],
+                    max_position=config['max_position'],
+                    intermediate_size=config['intermediate_size'],
+                    ffn_bias=config['ffn_bias'],
+                    num_layers=config['num_layers'],
+                    tie_word_embeddings=config['tie_word_embeddings'],
+                    block_size=self.block_size,
+                )
+            case 'meta-llama/Llama-3.2-1B-Instruct':
+                self.model = LlamaForCausalLM(
+                    vocab_size=config['vocab_size'],
+                    hidden_size=config['hidden_size'],
+                    head_dim=config['head_dim'],
+                    num_qo_heads=config['num_qo_heads'],
+                    num_kv_heads=config['num_kv_heads'],
+                    has_attn_bias=config['has_attn_bias'],
+                    rms_norm_epsilon=config['rms_norm_epsilon'],
+                    rope_base=config['rope_base'],
+                    max_position_embeddings=config['max_position_embeddings'],
+                    intermediate_size=config['intermediate_size'],
+                    ffn_bias=config['ffn_bias'],
+                    num_layers=config['num_layers'],
+                    block_size=self.block_size,
+                    tie_word_embeddings=config['tie_word_embeddings'],
+                )
+            case _:
+                raise Exception(f"Unsupported model: {config['model_name_or_path']}")
 
         # Load weights in GPU (model moved to GPU before loading weights)
         self.model = self.model.cuda(rank)

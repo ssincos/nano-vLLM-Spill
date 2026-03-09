@@ -762,3 +762,28 @@ atexit.register(self.exit)
 6. **LLM Engine** (top-level orchestration)
 
 Each step builds on the previous, gradually constructing a complete inference system with advanced optimizations like PagedAttention, CUDA graphs, and prefix caching.
+
+## Course Exercise
+
+Interested readers can try adding `meta-llama/Llama-3.2-1B-Instruct` to MinivLLM locally as an exercise.
+
+`meta-llama/Llama-3.2-1B-Instruct` (hereinafter referred to as Llama3.2) has a similar structure to `Qwen/Qwen3-0.6B`. The only slight difference in model components lies in the implementation of Rotary Embedding. Provided that the field names remain the same, the existing weight loading code in `loader.py` can be used directly for Llama3.2 without any modifications.
+
+Reference materials:
+- For the implementation of Llama3.2, you can refer to [Llama3.2 in mini-sglang](https://github.com/sgl-project/mini-sglang/blob/main/python/minisgl/models/llama.py)
+- The differences in Rotary Embedding implementation can be found in [Rotary Embedding in mini-sglang](https://github.com/sgl-project/mini-sglang/blob/dae78f6bb97d5c5aaadbc0772fc964d48a8ee726/python/minisgl/layers/rotary.py#L72-L86).
+- Various model parameters can be found in the `config.json` file of [Llama3.2 on Hugging Face](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct/tree/main).
+
+To complete the exercise, you can first clone the repository locally, then delete the Llama3.2 implementation in the repository: `rm src/myvllm/models/llama.py`. After that, create your own `src/myvllm/models/llama.py` file. By referring to the Llama3.2 implementation in the provided link, implement Llama3.2 yourself based on MinivLLM.
+
+Adding Llama3.2 only involves modifications to the following files:
+- `src/myvllm/models/llama.py`: Model implementation. This requires you to implement it yourself.
+- `src/myvllm/layers/rotary_embedding.py`: You need to add the different implementation for Llama3.2.
+- `src/myvllm/engine/model_runner.py`: The ModelRunner needs to be able to call the implemented Llama3.2.
+- `main_llama32.py`: Responsible for testing the implementation effect of Llama3.2.
+
+Run `main_llama32.py`, and the effect should look like this:
+
+![llama32-effect](assets/llama32-effect.png)
+
+Since the last three files (`rotary_embedding.py`, `model_runner.py`, `main_llama32.py`) require only minor modifications, MinivLLM has already implemented them. All you need to do is delete the `src/myvllm/models/llama.py` file, then repeatedly compare [Llama3.2 in mini-sglang](https://github.com/sgl-project/mini-sglang/blob/main/python/minisgl/models/llama.py) with `src/myvllm/models/qwen3.py`, and implement your own Llama3.2 in `src/myvllm/models/llama.py`. Once implemented, run `uv run main_llama32.py` to test. If your implementation is correct, you should see an effect similar to the one above. If you are truly stuck, refer to the original `src/myvllm/models/llama.py` in the repository in a timely manner.

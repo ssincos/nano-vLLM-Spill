@@ -774,3 +774,28 @@ atexit.register(self.exit)
 6. **LLM Engine**（顶层编排）
 
 每一步都建立在前一步之上，逐步构建一个完整的推理系统，并加入诸如 PagedAttention、CUDA graphs 与 prefix caching 等高级优化。
+
+## 课程练习
+
+感兴趣的读者可以在本地尝试向 MinivLLM 添加 `meta-llama/Llama-3.2-1B-Instruct` 作为练习。
+
+`meta-llama/Llama-3.2-1B-Instruct`（以下简称 Llama3.2） 和 `Qwen/Qwen3-0.6B` 有着相似的结构，模型组件上仅有 Rotary Embedding 的实现略有不同，在保持字段名相同的前提下，现有的权重加载代码 `loader.py` 不需要修改就能直接用在 Llama3.2 上。
+
+参考资料：
+- Llama3.2 的实现可以参考 [mini-sglang 中的 Llama3.2](https://github.com/sgl-project/mini-sglang/blob/main/python/minisgl/models/llama.py)
+- Rotary Embedding 实现的不同可以在 [mini-sglang 中的 Rotary Embedding](https://github.com/sgl-project/mini-sglang/blob/dae78f6bb97d5c5aaadbc0772fc964d48a8ee726/python/minisgl/layers/rotary.py#L72-L86) 中找到。
+- 各种模型参数可以在 [Hugging Face 中的 Llama3.2](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct/tree/main) 的 `config.json` 文件中找到。
+
+为了完成练习，可以先把仓库克隆到本地，然后删除仓库中的 Llama3.2 实现：`rm src/myvllm/models/llama.py`，再自己创建一个 `src/myvllm/models/llama.py` 文件，通过参考链接中的 Llama3.2，自己基于 MinivLLM 实现 Llama3.2。
+
+添加 Llama3.2 只涉及以下文件的修改：
+- `src/myvllm/models/llama.py`: 模型实现。需要你动手实现
+- `src/myvllm/layers/rotary_embedding.py`: 需要添加 Llama3.2 的不同实现。
+- `src/myvllm/engine/model_runner.py`: ModelRunner 需要能够调用实现的 Llama3.2。
+- `main_llama32.py`: 负责测试 Llama3.2 的实现效果。
+
+运行 `main_llama32.py`，效果如下：
+
+![llama32-effect](assets/llama32-effect.png)
+
+由于后三个文件 `rotary_embedding.py`、`model_runner.py`、`main_llama32.py` 中要修改的地方不多，MinivLLM 已经实现好了，你所要做的就只是删除 `src/myvllm/models/llama.py` 文件，然后反复对照 [mini-sglang 中的 Llama3.2](https://github.com/sgl-project/mini-sglang/blob/main/python/minisgl/models/llama.py) 和 `src/myvllm/models/qwen3.py`，在 `src/myvllm/models/llama.py` 中实现你自己的 Llama3.2。实现好后，运行 `uv run main_llama32.py` 进行测试。如果实现无误，你应该可以看到和上面相似的效果。如果实在不会，请及时参考仓库中的原始 `src/myvllm/models/llama.py`。
