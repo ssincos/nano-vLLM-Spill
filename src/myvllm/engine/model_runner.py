@@ -2,6 +2,7 @@ import math
 import torch
 import pickle
 import torch.distributed as dist
+from pathlib import Path
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
@@ -26,8 +27,10 @@ class ModelRunner:
         torch.cuda.set_device(rank)
 
         # set model
-        match config['model_name_or_path']:
-            case 'Qwen/Qwen3-0.6B':
+        path_str = self.config['model_name_or_path']
+        model_name = Path(path_str).name
+        match model_name:
+            case 'Qwen3-0.6B':
                 self.model = Qwen3ForCausalLM(
                     vocab_size=config['vocab_size'],
                     hidden_size=config['hidden_size'],
@@ -45,7 +48,7 @@ class ModelRunner:
                     tie_word_embeddings=config['tie_word_embeddings'],
                     block_size=self.block_size,
                 )
-            case 'meta-llama/Llama-3.2-1B-Instruct':
+            case 'Llama-3.2-1B-Instruct':
                 self.model = LlamaForCausalLM(
                     vocab_size=config['vocab_size'],
                     hidden_size=config['hidden_size'],
