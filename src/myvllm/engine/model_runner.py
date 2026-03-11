@@ -209,12 +209,12 @@ class ModelRunner:
         # compute the actual byte required of each block
         block_bytes = self.block_size * 2 * num_layers * num_kv_heads * head_dim * self.default_dtype.itemsize
         self.config['max_cached_blocks'] = int(available_mem // block_bytes)
-        assert  self.config['max_cached_blocks'] >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
+        assert self.config['max_cached_blocks'] >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
 
         # allocate max possible kv cache for the model, instead for each sequence
         # this is the key for paged attention: one giant KV cache pool, divided into blocks
         # IMPORTANT: Use zeros() instead of empty() to avoid garbage values
-        allocated_kv_cache = torch.zeros(2, self.config['num_layers'],  self.config['max_cached_blocks'], self.block_size, num_kv_heads, head_dim, device=f'cuda:{self.rank}')
+        allocated_kv_cache = torch.zeros(2, self.config['num_layers'], self.config['max_cached_blocks'], self.block_size, num_kv_heads, head_dim, device=f'cuda:{self.rank}')
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
