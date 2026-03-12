@@ -75,21 +75,15 @@ class LLMEngine:
 
     # add prompt string to the waiting queue by first transforming it to Sequence object
     def add_prompt(self, prompt: str, sampling_params: SamplingParams) -> int:
-        token_ids = self.tokenizer.encode(prompt)
-        self.scheduler.add_sequence(Sequence(token_ids=token_ids, block_size=self.config['block_size'],sampling_params=sampling_params))
-        return len(token_ids)
+        self.scheduler.add_sequence(Sequence(token_ids=self.tokenizer.encode(prompt), block_size=self.config['block_size'],sampling_params=sampling_params))
 
     # given a list of prompts
     # add_prompt for each prompt
     # call step until all sequences are finished
     # return the generated texts
     def generate(self, prompts: list[str], sampling_params: SamplingParams) -> list[str]:
-        start_generate_time = time.time()
-        num_output_tokens = 0
-        num_input_tokens = 0
-        input_tokens_finished = False
         for prompt in prompts:
-            num_input_tokens += self.add_prompt(prompt, sampling_params)
+            self.add_prompt(prompt, sampling_params)
         generated_tokens = {}
         while not self.scheduler.is_finished():
             start_t = time.time()
@@ -99,26 +93,9 @@ class LLMEngine:
             if is_prefill:
                 print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during prefilling")
             else:
-                print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during decoding")
-
-                # Input Tokens per sec 
-                if not input_tokens_finished:
-                    input_tokens_finished = True
-                    process_input_tokens_time = end_t - start_generate_time
-                    input_tokens_per_sec = num_input_tokens / process_input_tokens_time + 1e-10
-                    print(f'Input Tokens/sec: {input_tokens_per_sec}')
-                
-            for seq_id, tokens in outputs:
-                generated_tokens[seq_id] = tokens
-                num_output_tokens += len(tokens)
-
-        # Output Tokens per sec
-        end_generate_time = time.time()
-        generate_time = end_generate_time - start_generate_time + 1e-10
-        output_tokens_per_sec = num_output_tokens / generate_time
-        print(f'Output Tokens/sec: {output_tokens_per_sec}')
+                print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during decoding")  
+            generated_tokens.update({seq_id: tokens for seq_id, tokens in outputs})
 
         generated_tokens = [generated_tokens[seq_id] for seq_id in sorted(generated_tokens.keys())]
         output = {'text': [self.tokenizer.decode(tokens) for tokens in generated_tokens], 'token_ids': generated_tokens}
-        return output, output_tokens_per_sec, input_tokens_per_sec
-
+        return output
