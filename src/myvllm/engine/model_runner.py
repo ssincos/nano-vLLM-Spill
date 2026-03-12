@@ -172,7 +172,7 @@ class ModelRunner:
         if self.world_size > 1 and self.rank == 0: # will be called in main engine
             self.write_shm(method_name, args)
         method = getattr(self, method_name, None)
-        if method:
+        if method
             return method(*args)
         raise ValueError(f"Unknown method: {method_name}")
 
@@ -208,8 +208,23 @@ class ModelRunner:
         # check whether the current free memory can hold at least one block
         # compute the actual byte required of each block
         block_bytes = self.block_size * 2 * num_layers * num_kv_heads * head_dim * self.default_dtype.itemsize
-        self.config['max_cached_blocks'] = int(available_mem // block_bytes)
-        assert self.config['max_cached_blocks'] >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
+        num_available_kv_blocks = int(available_mem // block_bytes)
+        assert num_available_kv_blocks >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
+        
+        # multi model_runner sync
+        if self.world_size > 1:
+            print(f"[Rank {self.rank}] Local max_cached_blocks: {num_available_kv_blocks}")
+            per_rank_max_blocks_tensor = torch.tensor(
+                num_available_kv_blocks,
+                dtype=torch.long,
+                device=f'cuda:{self.rank}'
+            )
+            dist.all_reduce(per_rank_max_blocks_tensor, op=dist.ReduceOp.MIN)
+            self.config['max_cached_blocks'] = per_rank_max_blocks_tensor.item()
+        else:
+            self.config['max_cached_blocks'] = num_available_kv_blocks
+        if self.rank == 0:
+            print(f"[Rank 0] Global max_cached_blocks (min): {self.config['max_cached_blocks']}")
 
         # allocate max possible kv cache for the model, instead for each sequence
         # this is the key for paged attention: one giant KV cache pool, divided into blocks
