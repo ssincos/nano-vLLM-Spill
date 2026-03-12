@@ -172,7 +172,7 @@ class ModelRunner:
         if self.world_size > 1 and self.rank == 0: # will be called in main engine
             self.write_shm(method_name, args)
         method = getattr(self, method_name, None)
-        if method
+        if method:
             return method(*args)
         raise ValueError(f"Unknown method: {method_name}")
 
