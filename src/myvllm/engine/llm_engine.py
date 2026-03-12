@@ -74,7 +74,7 @@ class LLMEngine:
 
 
     # add prompt string to the waiting queue by first transforming it to Sequence object
-    def add_prompt(self, prompt: str, sampling_params: SamplingParams) -> int:
+    def add_prompt(self, prompt: str, sampling_params: SamplingParams) -> None:
         self.scheduler.add_sequence(Sequence(token_ids=self.tokenizer.encode(prompt), block_size=self.config['block_size'],sampling_params=sampling_params))
 
     # given a list of prompts
@@ -93,7 +93,7 @@ class LLMEngine:
             if is_prefill:
                 print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during prefilling")
             else:
-                print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during decoding")  
+                print(num_processed_tokens, 'number of processed tokens', num_processed_tokens/running_time, "tokens/sec during decoding")
             generated_tokens.update({seq_id: tokens for seq_id, tokens in outputs})
 
         generated_tokens = [generated_tokens[seq_id] for seq_id in sorted(generated_tokens.keys())]
