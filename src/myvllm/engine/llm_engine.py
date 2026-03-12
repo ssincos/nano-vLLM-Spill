@@ -24,6 +24,7 @@ def worker_process(config, rank, event):
 
 class LLMEngine:
     def __init__(self, config: dict):
+        self.config = config
         self.scheduler = Scheduler(
             max_num_sequences=config.get("max_num_sequences", 16),
             max_num_batched_tokens=config.get("max_num_batched_tokens", 1024),
@@ -75,7 +76,7 @@ class LLMEngine:
     # add prompt string to the waiting queue by first transforming it to Sequence object
     def add_prompt(self, prompt: str, sampling_params: SamplingParams) -> int:
         token_ids = self.tokenizer.encode(prompt)
-        self.scheduler.add_sequence(Sequence(token_ids=token_ids, sampling_params=sampling_params))
+        self.scheduler.add_sequence(Sequence(token_ids=token_ids, block_size=self.config['block_size'],sampling_params=sampling_params))
         return len(token_ids)
 
     # given a list of prompts
