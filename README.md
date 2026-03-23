@@ -9,6 +9,14 @@ In real-world production systems (like the official vLLM), the standard procedur
 
 Note: To use the offload feature, turn on the enable_offload: True parameter in your configuration dict
 
+### Core Updates
+
+To implement CPU offloading, the engine's core components were extended:
+
+* **`block_manager`**: Added `can_swapin`, `swapin`, and `swapout` functions. Introduced the management of `cpu_block` pools and implemented the state/metadata transfer mechanism between CPU and GPU.
+* **`scheduler`**: Refined the overall scheduling logic by adding a pipeline to handle and transition sequences in the `swapped` state.
+* **`model_runner`**: Added CPU memory capacity detection and dynamic allocation for CPU KV cache blocks. Implemented the `execute_swap` function to perform the actual asynchronous physical data transfer across the PCIe.
+
 ## Benchmark
 
 See `benchmark.py`.
