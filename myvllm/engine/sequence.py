@@ -9,13 +9,14 @@ class SequenceStatus(Enum):
     WAITING = auto()
     RUNNING = auto()
     FINISHED = auto()
+    SWAPPED = auto()
 
 
 class Sequence:
+    block_size = 256 # number of tokens per block
     counter = count()
 
-    def __init__(self, token_ids: list[int], block_size: int, sampling_params = SamplingParams()):
-        self.block_size = block_size # number of tokens per block
+    def __init__(self, token_ids: list[int], sampling_params = SamplingParams()):
         # record sequence id
         self.seq_id = next(Sequence.counter)
         # status
@@ -31,6 +32,7 @@ class Sequence:
         self.num_cached_tokens = 0
         # block_table
         self.block_table = []
+        self.cpu_block_table = []
         # sampling_params' related things
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
@@ -69,8 +71,16 @@ class Sequence:
 
     @property
     def last_block_num_tokens(self):
-        full_blocks = int(math.floor(self.num_tokens / self.block_size))
-        return len(self.token_ids[full_blocks * self.block_size : ])
+        if not self.num_tokens: # added: avoid edge case of num_tokens = 0
+            return 0
+        return self.num_tokens - (self.num_blocks - 1) * self.block_size # fixed
+
+    # The way of calculate last_block_num_tokens as below will trigger "AssertionError: Slot mapping size must match 
+    # number of tokens in attentionn forward" due to edge-case that is when the last_block_num_tokens = block_size
+    #def last_block_num_tokens(self):
+    #    full_blocks = int(math.floor(self.num_tokens / self.block_size))
+    #    return len(self.token_ids[full_blocks * self.block_size : ])
+
 
     def block(self, i):
         assert 0 <= i < self.num_blocks, f"Block index {i} out of range [0, {self.num_blocks})"

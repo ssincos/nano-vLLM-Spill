@@ -1,8 +1,8 @@
 import math
 import torch
 import pickle
+import psutil
 import torch.distributed as dist
-from pathlib import Path
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
@@ -15,6 +15,7 @@ from myvllm.utils import *
 class ModelRunner:
     def __init__(self, config: dict, rank: int, event: Event | list[Event]):
         self.config = config
+        self.enable_offload = config.get('enable_offload', False)
         self.event = event
 
         # set distributed config
@@ -27,10 +28,8 @@ class ModelRunner:
         torch.cuda.set_device(rank)
 
         # set model
-        path_str = self.config['model_name_or_path']
-        model_name = Path(path_str).name
-        match model_name:
-            case 'Qwen3-0.6B':
+        match config['model_name_or_path']:
+            case 'Qwen/Qwen3-0.6B':
                 self.model = Qwen3ForCausalLM(
                     vocab_size=config['vocab_size'],
                     hidden_size=config['hidden_size'],
@@ -48,7 +47,7 @@ class ModelRunner:
                     tie_word_embeddings=config['tie_word_embeddings'],
                     block_size=self.block_size,
                 )
-            case 'Llama-3.2-1B-Instruct':
+            case 'meta-llama/Llama-3.2-1B-Instruct':
                 self.model = LlamaForCausalLM(
                     vocab_size=config['vocab_size'],
                     hidden_size=config['hidden_size'],
@@ -76,9 +75,6 @@ class ModelRunner:
             from myvllm.utils.loader import load_weights_from_checkpoint
             load_weights_from_checkpoint(self.model, config['model_name_or_path'])
 
-        # Load weights in CPU (move the model to GPU after loading weights)
-        # self.model = self.model.cuda(rank)
-
         self.sampler = SamplerLayer()
 
         # Store default dtype before it's needed in allocate_kv_cache
@@ -87,11 +83,15 @@ class ModelRunner:
         # Debug flag for first decode step
         self._first_decode = False
 
+        if self.enable_offload:
+            self.swap_stream = torch.cuda.Stream(device=f'cuda:{self.rank}')
+            self.swap_event = torch.cuda.Event()
+        
         # warm up model so that we know peak memory usage
         self.warmup_model()
-        # allocate kv cache
+
         self.allocate_kv_cache()
-        # capture cuda graph for decoding
+        
         if not self.enforce_eager:
             self.capture_cudagraph()
 
@@ -186,15 +186,16 @@ class ModelRunner:
     def warmup_model(self):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        max_tokens = self.config['max_num_batch_tokens']
-        max_model_length = self.config['max_model_length']
-        batch_size = max_tokens // max_model_length
-        seqs = [Sequence(token_ids=[0]*max_model_length, block_size=self.config['block_size']) for _ in range(batch_size)]
+        max_tokens = self.config['max_num_batched_tokens']
+        max_model_len = self.config['max_model_length']
+        batch_size = min(self.config['max_num_batched_tokens'] // self.config['max_model_length'], self.config['max_num_sequences'])
+        seqs = [Sequence(token_ids=[0]*max_model_len) for _ in range(batch_size)]
         self.run(seqs, is_prefill=True)
         torch.cuda.empty_cache()
 
     # allocate kv cache memory blocks for model
     def allocate_kv_cache(self):
+        config = self.config
         # find all available memory
         free_mem, total_mem = torch.cuda.mem_get_info()
         total_free_mem = free_mem * self.config['gpu_memory_utilization']
@@ -204,54 +205,79 @@ class ModelRunner:
         available_mem = total_free_mem - (peak_mem_usage - current_mem_usage)
         
         # find parameters to compute kv cache size
-        num_layers = self.config['num_layers']
-        num_kv_heads = self.config['num_kv_heads'] // self.world_size
-        head_dim = self.config['head_dim'] if 'head_dim' in self.config else self.config['hidden_size'] // self.config['num_heads']
+        num_layers = config['num_layers']
+        num_kv_heads = config['num_kv_heads'] // self.world_size
+        head_dim = config['head_dim'] if 'head_dim' in self.config else self.config['hidden_size'] // self.config['num_heads']
 
         # check whether the current free memory can hold at least one block
         # compute the actual byte required of each block
         block_bytes = self.block_size * 2 * num_layers * num_kv_heads * head_dim * self.default_dtype.itemsize
-        num_available_kv_blocks = int(available_mem // block_bytes)
-        assert num_available_kv_blocks >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
-        
-        # Synchronize max_cached_blocks across all ranks.
-        # Each rank independently computed num_available_kv_blocks from its own
-        # free GPU memory. Ranks may differ slightly: rank-0 carries extra overhead
-        # (NCCL buffers, process-group state) so it often has less free memory than
-        # workers. Without sync, the scheduler (which runs only on rank-0) would use
-        # rank-0's local value and could allocate more blocks than some rank can hold,
-        # causing an OOM on that rank during KV cache writes.
-        if self.world_size > 1:
-            print(f"[Rank {self.rank}] Local max_cached_blocks: {num_available_kv_blocks}")
-            per_rank_max_blocks_tensor = torch.tensor(
-                num_available_kv_blocks,
-                dtype=torch.long,
-                device=f'cuda:{self.rank}'
-            )
-            # all_reduce with MIN: every rank learns the most conservative limit,
-            # i.e. the block count that even the most memory-constrained rank can serve.
-            # This single agreed-upon value is then stored in config so the Scheduler
-            # (initialized afterwards on rank-0) never allocates more blocks than any
-            # rank can physically hold.
-            dist.all_reduce(per_rank_max_blocks_tensor, op=dist.ReduceOp.MIN)
-            self.config['max_cached_blocks'] = per_rank_max_blocks_tensor.item()
-        else:
-            # Single GPU: no cross-rank sync needed; use the local value directly.
-            self.config['max_cached_blocks'] = num_available_kv_blocks
-        if self.rank == 0:
-            print(f"[Rank 0] Global max_cached_blocks (min): {self.config['max_cached_blocks']}")
+        config['num_gpu_blocks'] = int(available_mem // block_bytes)
+        assert config['num_gpu_blocks'] >= 1, f'Not enough memory to hold at least one block of KV cache on rank {self.rank}'
 
         # allocate max possible kv cache for the model, instead for each sequence
         # this is the key for paged attention: one giant KV cache pool, divided into blocks
         # IMPORTANT: Use zeros() instead of empty() to avoid garbage values
-        allocated_kv_cache = torch.zeros(2, self.config['num_layers'], self.config['max_cached_blocks'], self.block_size, num_kv_heads, head_dim, device=f'cuda:{self.rank}')
+        self.gpu_kv_cache = torch.zeros(2, config['num_layers'], config['num_gpu_blocks'], self.block_size, num_kv_heads, head_dim, device=f'cuda:{self.rank}')
+        
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, 'k_cache') and hasattr(module, 'v_cache'):
-                module.k_cache = allocated_kv_cache[0, layer_id]
-                module.v_cache = allocated_kv_cache[1, layer_id]
+                module.k_cache = self.gpu_kv_cache[0, layer_id]
+                module.v_cache = self.gpu_kv_cache[1, layer_id]
                 layer_id += 1
+                
+        # added: CPU Cache Allocation (Offloading)
+        if self.enable_offload:
+            cpu_memory_gb = config.get('cpu_memory_gb', 'auto')
+            if cpu_memory_gb == 'auto':
+                # Auto-detect CPU memory, leaving a safety margin
+                safety_margin_gb = config.get('cpu_memory_safety_margin_gb', 4.0)
+                available_gb = psutil.virtual_memory().available / (1024**3)
+                usable_gb = available_gb - safety_margin_gb
+                
+                if usable_gb <= 0:
+                    raise RuntimeError(f"Not enough CPU memory for offloading. Available: {available_gb:.2f}GB")
+                allocated_cpu_gb = usable_gb
+                
+                if self.rank == 0:
+                    print(f"[Rank 0] Auto-detected available CPU memory. Allocating {allocated_cpu_gb:.2f} GB for KV offloading.")
+            else:
+                allocated_cpu_gb = float(cpu_memory_gb)
 
+            config['num_cpu_blocks'] = int((allocated_cpu_gb * 1024**3) // block_bytes)
+            assert config['num_cpu_blocks'] >= 1, f"Not enough CPU memory to hold at least one CPU block on rank {self.rank}"
+
+            # Allocate Pinned Memory on CPU
+            self.cpu_kv_cache = torch.zeros(2, config['num_layers'], config['num_cpu_blocks'], self.block_size, num_kv_heads, head_dim, 
+                device="cpu", pin_memory=True)
+        else:
+            config['num_cpu_blocks'] = 0
+            self.cpu_kv_cache = None
+        
+
+    def execute_swap(self, swap_in_mapping: dict, swap_out_mapping: dict):
+        """
+        swap_in_mapping: {cpu_block_id: gpu_block_id}
+        swap_out_mapping: {gpu_block_id: cpu_block_id}
+        Note: swap_out_mapping and swap_in_mapping are not for the same sequence
+        """
+        if not self.enable_offload:
+            return
+
+        if swap_in_mapping or swap_out_mapping:
+            with torch.cuda.stream(self.swap_stream):
+                # GPU -> CPU
+                for gpu_id, cpu_id in swap_out_mapping.items():
+                    # when non_blocking=True, CPU move on to next once the order is placed
+                    self.cpu_kv_cache[:, :, cpu_id].copy_(self.gpu_kv_cache[:, :, gpu_id], non_blocking=True)
+                    
+                # CPU -> GPU
+                for cpu_id, gpu_id in swap_in_mapping.items():
+                    self.gpu_kv_cache[:, :, gpu_id].copy_(self.cpu_kv_cache[:, :, cpu_id], non_blocking=True)
+                
+        self.swap_event.record(self.swap_stream)
+                
     # given seqs
     # prepare the data needed for a prefill forward pass
     # taking prefix cache into consideration: 
@@ -377,17 +403,25 @@ class ModelRunner:
 
         return logits
 
+    def run(self, seqs: list[Sequence], is_prefill: bool, swap_in_map: dict = None, swap_out_map: dict = None ) -> list[int]:
 
-    # prepare prefill
-    # prepare sample
-    # run model
-    # sample logits
-    # reset context
-    def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
+        # execute swap first, while transfering data between GPU-CPU, CPU can work on preparing inputs ids, etc,.
+        self.execute_swap(swap_in_map, swap_out_map)
+
+        if not seqs: # when scheduled seqs is empty, there are no sequences in running, wait until seqs are successfully swapped in
+            if self.enable_offload:
+                self.swap_event.wait(torch.cuda.current_stream())
+            return []
+                    
         if is_prefill:
             input_ids = self.prepare_prefill(seqs)
         else:
             input_ids = self.prepare_decode(seqs)
+
+        # wait until data moving is finished
+        if self.enable_offload:
+            self.swap_event.wait(torch.cuda.current_stream())
+            
         logits = self.run_model(input_ids, is_prefill)
         # only sample when rank == 0
         token_ids = None

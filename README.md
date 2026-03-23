@@ -1,19 +1,6 @@
-<p align="center">
-  <img src="./assets/minivllm.png" alt="图片描述" width="50%" height="50%">
-</p>
-
-<p align="center">
-| <a href="./README.md"><b>English</b></a> 
-| <a href="./README_zh.md"><b>简体中文</b></a> |
-</p>
-
-# miniVLLM
+# Nano-vLLM-Spill
 
 A custom implementation of vLLM inference engine with attention mechanism benchmarks, based on Nano-vLLM but with self-contained paged attention and flash attention implementation. 
-
-Benchmarking on flash attention in prefilling time and paged attention in decoding time are provided.
-
-**New to vLLM?** Check out [HowToApproachvLLM.md](HowToApproachvLLM.md) for a step-by-step implementation guide covering layers, models, paged attention, CUDA graphs, and scheduling.
 
 ## Quickstart
 
@@ -36,46 +23,46 @@ uv run python benchmark_decoding.py
 
 To run multi-GPU setting, simply change world_size to n > 1 in config in main.py
 
-## What Each Script Does
+## Benchmark
 
-```bash
-uv run python main.py
-```
+See `benchmark.py`.
 
-This is the main inference engine demo
+**Test Configuration:**
+- Hardware: A100 (80GB)
+- Model: Qwen3-0.6B
 
-Demonstrates the complete LLM inference pipeline using a custom engine implementation:
-- Create a small version of Qwen3 with random initialization
-- Creates 60 chat prompts (2 base prompts repeated 30 times each)
-- Processes them through the custom LLM engine with batch processing
-- Uses paged attention and KV cache management for efficient inference
-- Generates up to 256 tokens per prompt with temperature sampling
+**Static Inference - Test 1:**
 
-This showcases how the custom vLLM implementation handles batched text generation with memory-efficient attention.
+- Total Requests: 384 sequences
+- Input Length: Randomly sampled 256 tokens
+- Output Length: 640 tokens
+  
+|            | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| offload on           | 156,800     | 224.02    | 699.94               |
+| offload off      | 245,760    | 125.99    | 1950.61               |
 
-```bash
-uv run python benchmark_prefilling.py
-```
+**Static Inference - Test 2:**
 
-This is the pefilling phase comparison
+- Total Requests: 512 sequences
+- Input Length: Randomly sampled 1024 tokens
+- Output Length: 2048 tokens
+  
+|            | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| offload on           | 1,048,576     | 2575.10    | 407.20               |
+| offload off      | 1,048,576     | 1586.98    | 660.74               |
 
-Compares three attention implementations during the **prefilling phase** (processing input prompts):
+**Static Inference - Test 3:**
 
-1. **PyTorch Standard (O(N²) memory)**: Traditional attention that materializes full attention matrix
-2. **Naive Triton (O(N²) memory)**: GPU kernel that also uses O(N²) memory, limited by shared memory constraints (≤128 tokens)
-3. **Flash Attention (O(N) memory)**: Memory-efficient online softmax algorithm that processes attention in blocks
-
-```bash
-uv run python benchmark_decoding.py
-```
-
-This is the decoding phase comparison
-
-Compares three implementations during the **decoding phase** (generating output tokens one at a time):
-
-1. **Naive PyTorch**: Simple loop-based implementation using paged KV cache
-2. **Optimized PyTorch**: Vectorized implementation with batch gathering and masking
-3. **Triton Kernel**: Custom GPU kernel optimized for paged attention decode
+- Total Requests: 64 sequences
+- Input Length: Randomly sampled 2048 tokens
+- Output Length: 4096 tokens
+  
+|            | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| offload on           | 163,840     | 861.12    | 190.26               |
+| offload off      | 262,144     | 1206.27    | 217.32               |
 
 
 ## Project Structure
@@ -90,8 +77,7 @@ myvllm/
 │       ├── utils/        # context
 │       └── sampling_parameters.py
 ├── main.py              # Full inference demo
-├── benchmark_prefilling.py   # Prefilling attention comparison
-└── benchmark_decoding.py     # Decoding attention comparison
+└── benchmark_decoding.py     # recomputation vs. offload 
 ```
 
 ## Requirements
@@ -99,8 +85,3 @@ myvllm/
 - Python ≥3.11, < 3.12
 - CUDA-capable GPU
 - Dependencies: `transformers`, `torch`, `xxhash` (managed by uv)
-
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Wenyueh/MinivLLM&type=date&legend=top-left)](https://www.star-history.com/?utm_source=chatgpt.com#Wenyueh/MinivLLM&type=date&legend=top-left)
