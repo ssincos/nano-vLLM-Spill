@@ -1,27 +1,13 @@
 # Nano-vLLM-Spill
 
-A custom implementation of vLLM inference engine with attention mechanism benchmarks, based on Nano-vLLM but with self-contained paged attention and flash attention implementation. 
+Extend [nano-vLLM] & [Mini-vLLM] with CPU offload — spill to CPU when GPU memory runs out.
 
-## Quickstart
+In the original Nano-vLLM and Mini-vLLM architectures, when the GPU runs out of free blocks to allocate, the system takes a "brute-force" approach: it preempts the sequence, completely drops its KV cache, moves it back to the `waiting` queue, and relies on Recomputation later. 
 
-```bash
-# Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
+In real-world production systems (like the official vLLM), the standard procedure for handling OOM (Out of Memory) is to Offload (Spill) the KV cache to CPU memory.
 
-# Sync dependencies
-uv sync
 
-# Run the main inference engine
-uv run python main.py
-
-# Run prefilling benchmark
-uv run python benchmark_prefilling.py
-
-# Run decoding benchmark
-uv run python benchmark_decoding.py
-```
-
-To run multi-GPU setting, simply change world_size to n > 1 in config in main.py
+Note: To use the offload feature, turn on the enable_offload: True parameter in your configuration dict
 
 ## Benchmark
 
